@@ -143,6 +143,7 @@ const MANAGED_KEYS = [
   "bLyrics-synced",
   "binimum-richsynced",
   "binimum-synced",
+  "genius-plain",
   "metadata",
 ] as const;
 
@@ -178,6 +179,28 @@ function findIsrc(value: unknown, visited = new Set<unknown>(), depth = 0): stri
   for (const item of Object.values(value)) {
     const found = findIsrc(item, visited, depth + 1);
     if (found) return found;
+  }
+
+  return null;
+}
+
+function readPlainLyricsResult(results: Record<string, unknown>): string | null {
+  const candidates = [results.plain, results.lyrics, results.text];
+
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string" || !candidate.trim()) {
+      continue;
+    }
+
+    try {
+      const parsed = JSON.parse(candidate);
+      if (typeof parsed === "string") return parsed;
+      if (typeof parsed?.plain === "string") return parsed.plain;
+      if (typeof parsed?.lyrics === "string") return parsed.lyrics;
+      if (typeof parsed?.text === "string") return parsed.text;
+    } catch (_e) {
+      return candidate;
+    }
   }
 
   return null;
@@ -360,6 +383,22 @@ async function processStreamData(event: string, data: any, params: ProviderParam
     const results = data.results;
 
     if (!results) return;
+
+    // Genius
+    if (provider === "genius") {
+      const plainLyrics = readPlainLyricsResult(results);
+      if (plainLyrics) {
+        sourceMap["genius-plain"].lyricSourceResult = {
+          lyrics: parsePlainLyrics(plainLyrics),
+          source: "Genius",
+          sourceHref: "https://genius.com",
+          musicVideoSynced: false,
+          cacheAllowed: true,
+        };
+      }
+      sourceMap["genius-plain"].filled = true;
+      resolveWaiter(params, "genius-plain");
+    }
 
     // Musixmatch
     if (provider === "musixmatch") {

@@ -3,7 +3,9 @@ import { log } from "@utils";
 
 export const GEMINI_TRANSLATION_DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 export const GEMINI_TRANSLATION_DEFAULT_MODEL = "gemini-3.5-flash";
-export const GEMINI_TRANSLATION_THINKING_LEVEL = "high";
+export const GEMINI_TRANSLATION_THINKING_LEVELS = ["minimal", "low", "medium", "high"] as const;
+export type GeminiTranslationThinkingLevel = (typeof GEMINI_TRANSLATION_THINKING_LEVELS)[number];
+export const GEMINI_TRANSLATION_DEFAULT_THINKING_LEVEL: GeminiTranslationThinkingLevel = "medium";
 
 export interface TranslationNote {
   term: string;
@@ -18,13 +20,11 @@ export interface TranslationResult {
 
 interface TranslationCache {
   romanization: Map<string, string>;
-  translation: Map<string, TranslationResult>;
   songTranslation: Map<string, BatchTranslationResponse>;
 }
 
 const cache: TranslationCache = {
   romanization: new Map(),
-  translation: new Map(),
   songTranslation: new Map(),
 };
 
@@ -41,6 +41,7 @@ interface GeminiTranslationRequest extends BatchRequest {
   album?: string;
   model?: string;
   baseUrl?: string;
+  thinkingLevel?: GeminiTranslationThinkingLevel;
 }
 
 export interface BatchTranslationResponse {
@@ -65,7 +66,7 @@ interface GeminiTranslationMessage {
     album?: string;
     model: string;
     baseUrl: string;
-    thinkingLevel: typeof GEMINI_TRANSLATION_THINKING_LEVEL;
+    thinkingLevel: GeminiTranslationThinkingLevel;
   };
 }
 
@@ -82,6 +83,15 @@ interface GeminiTranslationResponse {
 
 const BATCH_SEPARATOR = "\n\n;\n\n";
 const MAX_URL_LENGTH = 15000;
+const SONG_TRANSLATION_CACHE_VERSION = 1;
+const SONG_TRANSLATION_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+interface PersistedSongTranslationCache {
+  version: typeof SONG_TRANSLATION_CACHE_VERSION;
+  fingerprint: string;
+  expiresAt: number;
+  response: BatchTranslationResponse;
+}
 
 function normalizeTranslationNote(note: Partial<TranslationNote> | null | undefined): TranslationNote | null {
   const term = typeof note?.term === "string" ? note.term.trim() : "";
@@ -90,8 +100,18 @@ function normalizeTranslationNote(note: Partial<TranslationNote> | null | undefi
   return { term, explanation };
 }
 
+export function normalizeGeminiTranslationThinkingLevel(value: unknown): GeminiTranslationThinkingLevel {
+  if (typeof value !== "string") return GEMINI_TRANSLATION_DEFAULT_THINKING_LEVEL;
+  return (GEMINI_TRANSLATION_THINKING_LEVELS as readonly string[]).includes(value)
+    ? (value as GeminiTranslationThinkingLevel)
+    : GEMINI_TRANSLATION_DEFAULT_THINKING_LEVEL;
+}
+
 function buildSongTranslationCacheKey(request: Required<Pick<GeminiTranslationRequest, "targetLanguage">> &
-  Pick<GeminiTranslationRequest, "sourceLanguage" | "song" | "artist" | "album" | "model" | "baseUrl"> & {
+  Pick<
+    GeminiTranslationRequest,
+    "sourceLanguage" | "song" | "artist" | "album" | "model" | "baseUrl" | "thinkingLevel"
+  > & {
     lines: string[];
   }): string {
   return JSON.stringify({
@@ -99,12 +119,80 @@ function buildSongTranslationCacheKey(request: Required<Pick<GeminiTranslationRe
     sourceLanguage: request.sourceLanguage || "auto",
     model: request.model || GEMINI_TRANSLATION_DEFAULT_MODEL,
     baseUrl: request.baseUrl || GEMINI_TRANSLATION_DEFAULT_BASE_URL,
-    thinkingLevel: GEMINI_TRANSLATION_THINKING_LEVEL,
+    thinkingLevel: normalizeGeminiTranslationThinkingLevel(request.thinkingLevel),
     song: request.song || "",
     artist: request.artist || "",
     album: request.album || "",
     lines: request.lines,
   });
+}
+
+function hashString(input: string): string {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+
+  for (let i = 0; i < input.length; i++) {
+    const ch = input.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+
+  return `${(h2 >>> 0).toString(36)}${(h1 >>> 0).toString(36)}`;
+}
+
+function getPersistentSongTranslationCacheKey(fingerprint: string): string {
+  return `blyrics_translation_${hashString(fingerprint)}`;
+}
+
+async function getPersistentSongTranslation(
+  fingerprint: string,
+  expectedLineCount: number
+): Promise<BatchTranslationResponse | null> {
+  try {
+    const storageKey = getPersistentSongTranslationCacheKey(fingerprint);
+    const stored = (await chrome.storage.local.get({ [storageKey]: null }))[storageKey] as
+      | PersistedSongTranslationCache
+      | null;
+    if (
+      stored?.version !== SONG_TRANSLATION_CACHE_VERSION ||
+      stored.fingerprint !== fingerprint ||
+      stored.expiresAt < Date.now() ||
+      stored.response?.results?.length !== expectedLineCount
+    ) {
+      if (stored) {
+        chrome.storage.local.remove(storageKey).catch(error => {
+          log(TRANSLATION_ERROR_LOG, "Failed to remove stale song translation cache", error);
+        });
+      }
+      return null;
+    }
+
+    return stored.response;
+  } catch (error) {
+    log(TRANSLATION_ERROR_LOG, "Failed to read song translation cache", error);
+    return null;
+  }
+}
+
+async function setPersistentSongTranslation(
+  fingerprint: string,
+  response: BatchTranslationResponse
+): Promise<void> {
+  try {
+    const storageKey = getPersistentSongTranslationCacheKey(fingerprint);
+    const stored: PersistedSongTranslationCache = {
+      version: SONG_TRANSLATION_CACHE_VERSION,
+      fingerprint,
+      expiresAt: Date.now() + SONG_TRANSLATION_CACHE_TTL_MS,
+      response,
+    };
+    await chrome.storage.local.set({ [storageKey]: stored });
+  } catch (error) {
+    log(TRANSLATION_ERROR_LOG, "Failed to write song translation cache", error);
+  }
 }
 
 function createRequestId(): string {
@@ -145,7 +233,9 @@ export async function translateBatch(request: GeminiTranslationRequest): Promise
     signal,
     model = GEMINI_TRANSLATION_DEFAULT_MODEL,
     baseUrl = GEMINI_TRANSLATION_DEFAULT_BASE_URL,
+    thinkingLevel: requestedThinkingLevel = GEMINI_TRANSLATION_DEFAULT_THINKING_LEVEL,
   } = request;
+  const thinkingLevel = normalizeGeminiTranslationThinkingLevel(requestedThinkingLevel);
 
   if (!targetLanguage || lines.length === 0) {
     return { results: lines.map(() => null), detectedLanguage: "" };
@@ -169,10 +259,17 @@ export async function translateBatch(request: GeminiTranslationRequest): Promise
     album,
     model,
     baseUrl,
+    thinkingLevel,
   });
   const cached = cache.songTranslation.get(cacheKey);
   if (cached) {
     return cached;
+  }
+
+  const persistentCached = await getPersistentSongTranslation(cacheKey, lines.length);
+  if (persistentCached) {
+    cache.songTranslation.set(cacheKey, persistentCached);
+    return persistentCached;
   }
 
   try {
@@ -189,7 +286,7 @@ export async function translateBatch(request: GeminiTranslationRequest): Promise
           album,
           model,
           baseUrl,
-          thinkingLevel: GEMINI_TRANSLATION_THINKING_LEVEL,
+          thinkingLevel,
         },
       },
       signal
@@ -215,11 +312,11 @@ export async function translateBatch(request: GeminiTranslationRequest): Promise
         notes,
       };
       results[line.id] = result;
-      cache.translation.set(`${targetLanguage}_${original.text}`, result);
     });
 
     const batchResponse = { results, detectedLanguage };
     cache.songTranslation.set(cacheKey, batchResponse);
+    await setPersistentSongTranslation(cacheKey, batchResponse);
     return batchResponse;
   } catch (error) {
     if ((error as Error).name !== "AbortError") {
@@ -339,13 +436,7 @@ export async function romanizeBatch(request: BatchRequest): Promise<BatchRomaniz
 
 export function clearCache(): void {
   cache.romanization.clear();
-  cache.translation.clear();
   cache.songTranslation.clear();
-}
-
-export function getTranslationFromCache(text: string, targetLanguage: string): TranslationResult | null {
-  const cacheKey = `${targetLanguage}_${text.trim()}`;
-  return cache.translation.get(cacheKey) || null;
 }
 
 export function getRomanizationFromCache(text: string): string | null {

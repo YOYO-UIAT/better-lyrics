@@ -30,7 +30,6 @@ import type { Lyric, LyricPart } from "@modules/lyrics/providers/shared";
 import type { UnisonData } from "@modules/lyrics/providers/unison";
 import {
   getRomanizationFromCache,
-  getTranslationFromCache,
   romanizeBatch,
   translateBatch,
   type TranslationNote,
@@ -599,7 +598,8 @@ function injectLyrics(data: LyricSourceResultWithMeta, keepLoaderVisible = false
       data.providerKey,
       data.videoId,
       unisonData,
-      syncType === "none"
+      syncType === "none",
+      data.lyricVersions
     );
   } else {
     addNoLyricsButton(data.song, data.artist, data.album, data.duration, data.videoId);
@@ -654,7 +654,8 @@ async function processBatchTranslationsAndRomanizations(
   const isTranslateEnabled = AppState.isTranslateEnabled;
 
   const romanizationBatch: { index: number; text: string }[] = [];
-  const translationBatch: { index: number; text: string }[] = [];
+  const translationBatch: { index: number; text: string; fallbackTranslation: string | null }[] = [];
+  const fullTranslationLines = lyrics.map(item => item.words);
 
   let sourceLanguage = data.language;
 
@@ -697,25 +698,20 @@ async function processBatchTranslationsAndRomanizations(
     const isSourceLangDisabled = !!sourceLanguage && isTranslationDisabledForLang(sourceLanguage);
 
     if (isTranslateEnabled && !isSourceLangDisabled) {
-      let translationResult: string | null = null;
-      let translationNotes: TranslationNote[] = [];
+      let providerTranslationResult: string | null = null;
 
       const matchedLang =
         item.translations && Object.keys(item.translations).find(lang => langCodesMatch(targetTranslationLang, lang));
       if (item.translations && matchedLang) {
-        translationResult = item.translations[matchedLang];
+        providerTranslationResult = item.translations[matchedLang];
       } else if (item.translation && langCodesMatch(targetTranslationLang, item.translation.lang)) {
-        translationResult = item.translation.text;
-      } else {
-        const cached = getTranslationFromCache(item.words, targetTranslationLang);
-        translationResult = cached?.translatedText || null;
-        translationNotes = cached?.notes || [];
+        providerTranslationResult = item.translation.text;
       }
 
-      if (translationResult && !isSameText(translationResult, item.words)) {
-        injectTranslation(lyricElement, translationResult, translationNotes);
-      } else if (sourceLanguage !== targetTranslationLang || containsNonLatin(item.words) || !sourceLanguage) {
-        translationBatch.push({ index, text: item.words });
+      if (sourceLanguage !== targetTranslationLang || containsNonLatin(item.words) || !sourceLanguage) {
+        translationBatch.push({ index, text: item.words, fallbackTranslation: providerTranslationResult });
+      } else if (providerTranslationResult && !isSameText(providerTranslationResult, item.words)) {
+        injectTranslation(lyricElement, providerTranslationResult);
       }
     }
   });
@@ -724,6 +720,8 @@ async function processBatchTranslationsAndRomanizations(
 
   // 2. Perform Batch Requests
   const promises: Promise<void>[] = [];
+  const cleanupTranslationExitListener =
+    translationBatch.length > 0 ? setupTranslationCancellationOnUiExit() : () => {};
 
   if (romanizationBatch.length > 0) {
     promises.push(
@@ -757,7 +755,7 @@ async function processBatchTranslationsAndRomanizations(
     promises.push(
       (async () => {
         const response = await translateBatch({
-          lines: translationBatch.map(b => b.text),
+          lines: fullTranslationLines,
           targetLanguage: targetTranslationLang,
           sourceLanguage: sourceLanguage || undefined,
           song: data.song,
@@ -765,6 +763,7 @@ async function processBatchTranslationsAndRomanizations(
           album: data.album,
           model: AppState.geminiTranslationModel,
           baseUrl: AppState.geminiTranslationBaseUrl,
+          thinkingLevel: AppState.geminiTranslationThinkingLevel,
           signal,
         });
         if (isStale()) return;
@@ -776,10 +775,15 @@ async function processBatchTranslationsAndRomanizations(
 
         if (isTranslationDisabledForLang(sourceLanguage || "")) return;
 
-        response.results.forEach((result, i) => {
+        translationBatch.forEach(item => {
+          const result = response.results[item.index];
           if (result) {
-            const originalIndex = translationBatch[i].index;
-            injectTranslation(linesData[originalIndex].lyricElement, result.translatedText, result.notes);
+            injectTranslation(linesData[item.index].lyricElement, result.translatedText, result.notes);
+            return;
+          }
+
+          if (item.fallbackTranslation && !isSameText(item.fallbackTranslation, item.text)) {
+            injectTranslation(linesData[item.index].lyricElement, item.fallbackTranslation);
           }
         });
         lyricsElementAdded();
@@ -787,7 +791,11 @@ async function processBatchTranslationsAndRomanizations(
     );
   }
 
-  await Promise.all(promises);
+  try {
+    await Promise.all(promises);
+  } finally {
+    cleanupTranslationExitListener();
+  }
 }
 
 function injectRomanization(
@@ -829,6 +837,42 @@ function injectTranslation(lyricElement: HTMLElement, text: string, notes: Trans
     noteElement.textContent = `※ ${note.term}: ${note.explanation}`;
     lyricElement.appendChild(noteElement);
   });
+}
+
+function setupTranslationCancellationOnUiExit(): () => void {
+  const abortTranslation = () => {
+    AppState.lyricAbortController?.abort("Lyrics UI exited");
+  };
+
+  const abortIfLyricsTabHidden = () => {
+    const tabSelector = document.getElementsByClassName(TAB_HEADER_CLASS)[1] as HTMLElement | undefined;
+    if (!tabSelector || tabSelector.getAttribute("aria-selected") !== "true") {
+      abortTranslation();
+    }
+  };
+
+  const abortIfDocumentHidden = () => {
+    if (document.visibilityState === "hidden") {
+      abortTranslation();
+    }
+  };
+
+  const tabSelector = document.getElementsByClassName(TAB_HEADER_CLASS)[1] as HTMLElement | undefined;
+  const observer = tabSelector ? new MutationObserver(abortIfLyricsTabHidden) : null;
+  if (tabSelector && observer) {
+    observer.observe(tabSelector, { attributes: true, attributeFilter: ["aria-selected"] });
+  }
+
+  document.addEventListener("visibilitychange", abortIfDocumentHidden);
+  window.addEventListener("pagehide", abortTranslation);
+  window.addEventListener("beforeunload", abortTranslation);
+
+  return () => {
+    observer?.disconnect();
+    document.removeEventListener("visibilitychange", abortIfDocumentHidden);
+    window.removeEventListener("pagehide", abortTranslation);
+    window.removeEventListener("beforeunload", abortTranslation);
+  };
 }
 
 export function calculateLyricPositions() {

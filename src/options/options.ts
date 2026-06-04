@@ -1,6 +1,6 @@
 // Function to save user options
 
-import { LOG_PREFIX, ROMANIZATION_LANGUAGES, UNISON_DOCK_DEFAULT_POSITION } from "@constants";
+import { LOG_PREFIX, PROVIDER_CONFIGS, ROMANIZATION_LANGUAGES, UNISON_DOCK_DEFAULT_POSITION } from "@constants";
 import { getLanguageDisplayName, initI18n, loadLocaleOverride, SUPPORTED_LOCALES, t } from "@core/i18n";
 import { exportIdentity, getIdentity, importIdentity, type KeyIdentity } from "@core/keyIdentity";
 import Sortable from "sortablejs";
@@ -18,6 +18,7 @@ interface Options {
   translationLanguage: string;
   geminiTranslationBaseUrl: string;
   geminiTranslationModel: string;
+  geminiTranslationThinkingLevel: string;
   isCursorAutoHideEnabled: boolean;
   isRomanizationEnabled: boolean;
   preferredProviderList: string[];
@@ -33,6 +34,9 @@ const saveOptions = (): void => {
   const options = getOptionsFromForm();
   saveOptionsToStorage(options);
 };
+
+const getDefaultProviderList = (): string[] =>
+  [...PROVIDER_CONFIGS].sort((a, b) => a.priority - b.priority).map(provider => provider.key);
 
 // Function to get options from form elements
 const getOptionsFromForm = (): Options => {
@@ -57,6 +61,8 @@ const getOptionsFromForm = (): Options => {
     translationLanguage: (document.getElementById("translationLanguage") as HTMLInputElement).value,
     geminiTranslationBaseUrl: (document.getElementById("geminiTranslationBaseUrl") as HTMLInputElement).value.trim(),
     geminiTranslationModel: (document.getElementById("geminiTranslationModel") as HTMLInputElement).value.trim(),
+    geminiTranslationThinkingLevel: (document.getElementById("geminiTranslationThinkingLevel") as HTMLSelectElement)
+      .value,
     isCursorAutoHideEnabled: (document.getElementById("cursorAutoHide") as HTMLInputElement).checked,
     isRomanizationEnabled: (document.getElementById("isRomanizationEnabled") as HTMLInputElement).checked,
     preferredProviderList: preferredProviderList,
@@ -214,24 +220,9 @@ const restoreOptions = (): void => {
     translationLanguage: "en",
     geminiTranslationBaseUrl: "https://generativelanguage.googleapis.com/v1beta",
     geminiTranslationModel: "gemini-3.5-flash",
+    geminiTranslationThinkingLevel: "medium",
     isRomanizationEnabled: false,
-    preferredProviderList: [
-      "bLyrics-richsynced",
-      "unison-richsynced",
-      "binimum-richsynced",
-      "portato-richsynced",
-      "musixmatch-richsync",
-      "yt-captions",
-      "bLyrics-synced",
-      "unison-synced",
-      "binimum-synced",
-      "lrclib-synced",
-      "legato-synced",
-      "musixmatch-synced",
-      "yt-lyrics",
-      "unison-plain",
-      "lrclib-plain",
-    ],
+    preferredProviderList: getDefaultProviderList(),
     romanizationDisabledLanguages: [],
     translationDisabledLanguages: [],
     uiLanguage: "auto",
@@ -262,6 +253,8 @@ const setOptionsInForm = (items: Options): void => {
     items.geminiTranslationBaseUrl || "https://generativelanguage.googleapis.com/v1beta";
   (document.getElementById("geminiTranslationModel") as HTMLInputElement).value =
     items.geminiTranslationModel || "gemini-3.5-flash";
+  (document.getElementById("geminiTranslationThinkingLevel") as HTMLSelectElement).value =
+    items.geminiTranslationThinkingLevel || "medium";
   chrome.storage.local.get({ geminiTranslationApiKey: "" }, localItems => {
     const apiKey = localItems.geminiTranslationApiKey;
     (document.getElementById("geminiTranslationApiKey") as HTMLInputElement).value =
@@ -285,23 +278,7 @@ const setOptionsInForm = (items: Options): void => {
   providersListElem.replaceChildren();
 
   // Always recreate in the default order to make sure no items go missing
-  let unseenProviders = [
-    "bLyrics-richsynced",
-    "unison-richsynced",
-    "binimum-richsynced",
-    "portato-richsynced",
-    "musixmatch-richsync",
-    "yt-captions",
-    "bLyrics-synced",
-    "unison-synced",
-    "binimum-synced",
-    "lrclib-synced",
-    "legato-synced",
-    "musixmatch-synced",
-    "yt-lyrics",
-    "unison-plain",
-    "lrclib-plain",
-  ];
+  let unseenProviders = getDefaultProviderList();
 
   for (let i = 0; i < items.preferredProviderList.length; i++) {
     const providerId = items.preferredProviderList[i];
@@ -362,6 +339,7 @@ const getProviderIdToInfoMap = (): { [key: string]: ProviderInfo } => ({
   },
   "yt-lyrics": { name: t("options_provider_youtube"), syncType: "unsynced" },
   "lrclib-plain": { name: t("options_provider_lrclib"), syncType: "unsynced" },
+  "genius-plain": { name: "Genius", syncType: "unsynced" },
 });
 
 const getSyncTypeConfig = (): {

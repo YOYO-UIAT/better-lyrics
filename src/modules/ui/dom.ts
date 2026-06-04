@@ -27,9 +27,10 @@ import {
   TRANSLATED_LYRICS_CLASS,
   UNISON_DOCK_CLASS,
 } from "@constants";
-import { AppState } from "@core/appState";
+import { AppState, reloadLyrics } from "@core/appState";
 import { t } from "@core/i18n";
 import { disconnectResizeObserver } from "@modules/lyrics/injectLyrics";
+import { setSelectedLyricProvider, type LyricVersionOption } from "@modules/lyrics/providers/shared";
 import type { ThumbnailElement } from "@modules/lyrics/requestSniffer/NextResponse";
 import { getSongMetadata } from "@modules/lyrics/requestSniffer/requestSniffer";
 import {
@@ -353,7 +354,8 @@ export function addFooter(
   providerKey?: string,
   videoId?: string,
   unisonData?: UnisonData,
-  showRequestButton = false
+  showRequestButton = false,
+  lyricVersions: LyricVersionOption[] = []
 ): void {
   if (document.getElementsByClassName(FOOTER_CLASS).length !== 0) {
     document.getElementsByClassName(FOOTER_CLASS)[0].remove();
@@ -363,7 +365,7 @@ export function addFooter(
   const footer = document.createElement("div");
   footer.classList.add(FOOTER_CLASS);
   lyricsElement.appendChild(footer);
-  createFooter(song, artist, album, duration, videoId, showRequestButton);
+  createFooter(song, artist, album, duration, videoId, showRequestButton, providerKey, lyricVersions);
 
   const footerLink = document.getElementById("betterLyricsFooterLink") as HTMLAnchorElement;
   sourceHref = sourceHref || HOMEPAGE_URL;
@@ -400,6 +402,51 @@ export function addFooter(
     AppState.currentUnisonData = null;
     unmountUnisonDock();
   }
+}
+
+function createLyricVersionSelector(
+  song: string,
+  artist: string,
+  videoId: string,
+  providerKey: string | undefined,
+  lyricVersions: LyricVersionOption[]
+): HTMLElement | null {
+  const selectableVersions = lyricVersions.filter((version, index, versions) => {
+    return versions.findIndex(v => v.providerKey === version.providerKey) === index;
+  });
+  if (selectableVersions.length <= 1) return null;
+
+  const wrapper = document.createElement("label");
+  wrapper.className = `${FOOTER_CLASS}__version`;
+
+  const select = document.createElement("select");
+  select.className = `${FOOTER_CLASS}__version-select`;
+  select.title = "Lyrics version";
+
+  selectableVersions.forEach(version => {
+    const info = providerDisplayInfo[version.providerKey];
+    const option = document.createElement("option");
+    option.value = version.providerKey;
+    option.textContent = info ? `${info.name} (${info.syncType})` : version.source;
+    select.appendChild(option);
+  });
+
+  if (providerKey) {
+    select.value = providerKey;
+  }
+
+  select.addEventListener("change", () => {
+    setSelectedLyricProvider(videoId, song, artist, select.value as LyricVersionOption["providerKey"])
+      .then(() => {
+        reloadLyrics();
+      })
+      .catch(error => {
+        log(LOG_PREFIX_UNISON, "Failed to save lyric version selection:", error);
+      });
+  });
+
+  wrapper.appendChild(select);
+  return wrapper;
 }
 
 const unisonControlsRegistry = {
@@ -740,7 +787,9 @@ function createFooter(
   album: string,
   duration: number,
   videoId?: string,
-  showRequestButton = false
+  showRequestButton = false,
+  providerKey?: string,
+  lyricVersions: LyricVersionOption[] = []
 ): void {
   try {
     const footer = document.getElementsByClassName(FOOTER_CLASS)[0] as HTMLElement;
@@ -787,6 +836,12 @@ function createFooter(
     });
 
     footer.appendChild(footerContainer);
+    if (videoId) {
+      const versionSelector = createLyricVersionSelector(song, artist, videoId, providerKey, lyricVersions);
+      if (versionSelector) {
+        footer.appendChild(versionSelector);
+      }
+    }
     footer.appendChild(geniusContainer);
     if (videoId) {
       footer.appendChild(

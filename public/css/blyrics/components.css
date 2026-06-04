@@ -265,6 +265,50 @@
 	filter: brightness(10);
 }
 
+.blyrics-footer__version {
+	align-items: center;
+	background-color: var(--blyrics-footer-bg-color);
+	border: 1px solid var(--blyrics-footer-border-color);
+	border-radius: var(--blyrics-border-radius);
+	display: flex;
+	font-family: var(--blyrics-footer-font-family);
+	font-size: var(--blyrics-footer-font-size);
+	font-weight: var(--blyrics-footer-font-weight);
+	padding: 0;
+	position: relative;
+	z-index: 2;
+}
+
+.blyrics-footer__version-select {
+	appearance: none;
+	background: transparent;
+	border: none;
+	color: var(--blyrics-footer-link-color);
+	cursor: pointer;
+	font: inherit;
+	max-width: min(18rem, 60vw);
+	min-height: 100%;
+	outline: none;
+	padding: 0.5rem 2rem 0.5rem 1rem;
+}
+
+.blyrics-footer__version::after {
+	border-left: 4px solid transparent;
+	border-right: 4px solid transparent;
+	border-top: 5px solid var(--blyrics-footer-link-color);
+	content: "";
+	pointer-events: none;
+	position: absolute;
+	right: 0.85rem;
+	top: 50%;
+	transform: translateY(-50%);
+}
+
+.blyrics-footer__version-select > option {
+	background: #181818;
+	color: #fff;
+}
+
 .blyrics-footer__vote {
 	background-color: var(--blyrics-footer-bg-color);
 	border: none;

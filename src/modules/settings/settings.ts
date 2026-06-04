@@ -7,6 +7,8 @@ import {
   clearCache as clearTranslationCache,
   GEMINI_TRANSLATION_DEFAULT_BASE_URL,
   GEMINI_TRANSLATION_DEFAULT_MODEL,
+  GEMINI_TRANSLATION_DEFAULT_THINKING_LEVEL,
+  normalizeGeminiTranslationThinkingLevel,
 } from "@modules/lyrics/translation";
 import { mountUnisonDock, reloadAlbumArt, unmountUnisonDock, updateUnisonDockPosition } from "@modules/ui/dom";
 import { applyCustomStyles, getAndApplyCustomStyles } from "@modules/ui/styleInjector";
@@ -321,6 +323,7 @@ export function loadTranslationSettings(): void {
       translationLanguage: "en",
       geminiTranslationBaseUrl: GEMINI_TRANSLATION_DEFAULT_BASE_URL,
       geminiTranslationModel: GEMINI_TRANSLATION_DEFAULT_MODEL,
+      geminiTranslationThinkingLevel: GEMINI_TRANSLATION_DEFAULT_THINKING_LEVEL,
       romanizationDisabledLanguages: [],
       translationDisabledLanguages: [],
     },
@@ -334,6 +337,7 @@ function applyTranslationSettings(items: {
   translationLanguage?: string;
   geminiTranslationBaseUrl?: string;
   geminiTranslationModel?: string;
+  geminiTranslationThinkingLevel?: string;
   romanizationDisabledLanguages?: string[];
   translationDisabledLanguages?: string[];
 }): void {
@@ -342,6 +346,7 @@ function applyTranslationSettings(items: {
   AppState.translationLanguage = items.translationLanguage || "en";
   AppState.geminiTranslationBaseUrl = items.geminiTranslationBaseUrl || GEMINI_TRANSLATION_DEFAULT_BASE_URL;
   AppState.geminiTranslationModel = items.geminiTranslationModel || GEMINI_TRANSLATION_DEFAULT_MODEL;
+  AppState.geminiTranslationThinkingLevel = normalizeGeminiTranslationThinkingLevel(items.geminiTranslationThinkingLevel);
   AppState.romanizationDisabledLanguages = items.romanizationDisabledLanguages || [];
   AppState.translationDisabledLanguages = items.translationDisabledLanguages || [];
 }

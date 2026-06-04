@@ -399,6 +399,7 @@ interface ProviderConfig {
 }
 
 export const PROVIDER_CONFIGS: ProviderConfig[] = [
+  { key: "genius-plain", displayName: "Genius", syncType: "unsynced", priority: -1 },
   { key: "bLyrics-richsynced", displayName: "Better Lyrics", syncType: "syllable", priority: 0 },
   {
     key: "unison-richsynced",

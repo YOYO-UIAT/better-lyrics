@@ -183,6 +183,10 @@
     "message": "Gemini model",
     "description": "Gemini model setting label"
   },
+  "options_language_geminiThinkingLevel": {
+    "message": "Gemini thinking level",
+    "description": "Gemini thinking level setting label"
+  },
   "options_language_geminiBaseUrl": {
     "message": "Gemini API base URL",
     "description": "Gemini API base URL setting label"

@@ -2,6 +2,7 @@ import { GENERAL_ERROR_LOG, UNISON_DOCK_DEFAULT_POSITION } from "@constants";
 import type { LyricsData } from "@modules/lyrics/injectLyrics";
 import { createLyrics } from "@modules/lyrics/lyrics";
 import type { UnisonData } from "@modules/lyrics/providers/unison";
+import type { GeminiTranslationThinkingLevel } from "@modules/lyrics/translation";
 import { flushLoader } from "@modules/ui/dom";
 import { log } from "@utils";
 
@@ -42,6 +43,7 @@ interface AppStateType {
   translationLanguage: string;
   geminiTranslationBaseUrl: string;
   geminiTranslationModel: string;
+  geminiTranslationThinkingLevel: GeminiTranslationThinkingLevel;
   isPassiveScrollEnabled: boolean;
   hasPreloadedNextSong: boolean;
   currentInjectionId: number;
@@ -73,6 +75,7 @@ export const AppState: AppStateType = {
   translationLanguage: "en",
   geminiTranslationBaseUrl: "https://generativelanguage.googleapis.com/v1beta",
   geminiTranslationModel: "gemini-3.5-flash",
+  geminiTranslationThinkingLevel: "medium",
   isPassiveScrollEnabled: true,
   hasPreloadedNextSong: false,
   currentInjectionId: 0,

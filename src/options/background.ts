@@ -23,6 +23,8 @@ import { fetchAllStoreThemes } from "./store/themeStoreService";
 const THEME_UPDATE_ALARM = "theme-update-check";
 const UPDATE_INTERVAL_MINUTES = 360; // 6 hours
 const GEMINI_DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
+const GEMINI_THINKING_LEVELS = ["minimal", "low", "medium", "high"] as const;
+type GeminiThinkingLevel = "minimal" | "low" | "medium" | "high";
 
 interface GeminiTranslationLine {
   id: number;
@@ -41,7 +43,7 @@ interface GeminiTranslationRequest {
     album?: string;
     model: string;
     baseUrl: string;
-    thinkingLevel: "high";
+    thinkingLevel: GeminiThinkingLevel;
   };
 }
 
@@ -61,9 +63,15 @@ interface GeminiTranslationResponsePayload {
 
 const geminiTranslationControllers = new Map<string, AbortController>();
 
-function normalizeGeminiBaseUrl(baseUrl: string | undefined): string {
-  const normalized = (baseUrl || GEMINI_DEFAULT_BASE_URL).trim().replace(/\/+$/, "");
+function normalizeGeminiBaseUrl(baseUrl: unknown): string {
+  const rawBaseUrl = typeof baseUrl === "string" ? baseUrl : GEMINI_DEFAULT_BASE_URL;
+  const normalized = (rawBaseUrl || GEMINI_DEFAULT_BASE_URL).trim().replace(/\/+$/, "");
   return normalized || GEMINI_DEFAULT_BASE_URL;
+}
+
+function normalizeGeminiThinkingLevel(value: unknown): GeminiThinkingLevel {
+  if (typeof value !== "string") return "medium";
+  return (GEMINI_THINKING_LEVELS as readonly string[]).includes(value) ? (value as GeminiThinkingLevel) : "medium";
 }
 
 function buildGeminiTranslationSchema(lineCount: number): Record<string, unknown> {
@@ -156,8 +164,9 @@ async function handleGeminiTranslation(request: GeminiTranslationRequest) {
     return { success: false, error: "Gemini API key is not configured" };
   }
 
-  const model = payload.model.trim() || "gemini-3.5-flash";
+  const model = (typeof payload.model === "string" ? payload.model.trim() : "") || "gemini-3.5-flash";
   const baseUrl = normalizeGeminiBaseUrl(payload.baseUrl);
+  const thinkingLevel = normalizeGeminiThinkingLevel(payload.thinkingLevel);
   const url = `${baseUrl}/models/${encodeURIComponent(model)}:generateContent`;
   const abortController = new AbortController();
   geminiTranslationControllers.set(requestId, abortController);
@@ -190,7 +199,7 @@ async function handleGeminiTranslation(request: GeminiTranslationRequest) {
           responseMimeType: "application/json",
           responseJsonSchema: buildGeminiTranslationSchema(payload.lines.length),
           thinkingConfig: {
-            thinkingLevel: payload.thinkingLevel,
+            thinkingLevel,
           },
         },
       }),

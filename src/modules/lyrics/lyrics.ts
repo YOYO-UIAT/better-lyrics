@@ -11,8 +11,8 @@ import { stringSimilarity } from "@modules/lyrics/lyricParseUtils";
 import { registerThemeSetting } from "@modules/settings/themeOptions";
 import { flushLoader, renderLoader } from "@modules/ui/dom";
 import { log } from "@utils";
-import type { Lyric, LyricSourceResult, ProviderParameters } from "./providers/shared";
-import { getLyrics, newSourceMap, providerPriority } from "./providers/shared";
+import type { Lyric, LyricSourceKey, LyricSourceResult, LyricVersionOption, ProviderParameters, SourceMapType } from "./providers/shared";
+import { getLyrics, getSelectedLyricProvider, newSourceMap, providerPriority } from "./providers/shared";
 import type { YTLyricSourceResult } from "./providers/yt";
 import { getSongAlbum, getSongMetadata, type SegmentMap } from "./requestSniffer/requestSniffer";
 import { clearCache as clearTranslationCache } from "./translation";
@@ -33,7 +33,28 @@ export type LyricSourceResultWithMeta = LyricSourceResult & {
   videoId: string;
   segmentMap: SegmentMap | null;
   providerKey?: string;
+  lyricVersions?: LyricVersionOption[];
 };
+
+function getProviderSearchOrder(selectedProvider: LyricSourceKey | null): LyricSourceKey[] {
+  if (!selectedProvider || !providerPriority.includes(selectedProvider)) {
+    return providerPriority;
+  }
+  return [selectedProvider, ...providerPriority.filter(provider => provider !== selectedProvider)];
+}
+
+function getAvailableLyricVersions(sourceMap: SourceMapType): LyricVersionOption[] {
+  return providerPriority
+    .map(providerKey => {
+      const result = sourceMap[providerKey].lyricSourceResult;
+      if (!result?.lyrics?.length) return null;
+      return {
+        providerKey,
+        source: result.source,
+      };
+    })
+    .filter((version): version is LyricVersionOption => !!version);
+}
 
 export function applySegmentMapToLyrics(lyricData: LyricsData | null, segmentMap: SegmentMap) {
   if (segmentMap && lyricData) {
@@ -223,9 +244,10 @@ export async function createLyrics(detail: PlayerDetails, signal: AbortSignal): 
       log(err);
     }
 
-    let selectedProvider: string | undefined;
+    const preferredSelectedProvider = await getSelectedLyricProvider(videoId, providerParameters.song, providerParameters.artist);
+    let selectedProvider: LyricSourceKey | undefined;
 
-    for (let provider of providerPriority) {
+    for (let provider of getProviderSearchOrder(preferredSelectedProvider)) {
       if (signal.aborted) {
         return;
       }
@@ -299,6 +321,7 @@ export async function createLyrics(detail: PlayerDetails, signal: AbortSignal): 
       videoId: providerParameters.videoId,
       segmentMap,
       providerKey: selectedProvider,
+      lyricVersions: getAvailableLyricVersions(sourceMap),
       ...lyrics,
     };
 

@@ -60,6 +60,11 @@ export interface LyricSourceResult {
   unisonId?: number;
 }
 
+export interface LyricVersionOption {
+  providerKey: LyricSourceKey;
+  source: string;
+}
+
 export type LyricsArray = Lyric[];
 
 export interface Lyric {
@@ -112,21 +117,86 @@ export let providerPriority: LyricSourceKey[] = [];
 
 let hasInitializedProviders = false;
 
+interface StoredLyricProviderSelection {
+  song: string;
+  artist: string;
+  providerKey: string;
+}
+
+function getLyricProviderSelectionKey(videoId: string): string {
+  return `blyrics_selected_provider_${videoId}`;
+}
+
+function isStoredLyricProviderSelection(value: unknown): value is StoredLyricProviderSelection {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    typeof (value as StoredLyricProviderSelection).song === "string" &&
+    typeof (value as StoredLyricProviderSelection).artist === "string" &&
+    typeof (value as StoredLyricProviderSelection).providerKey === "string"
+  );
+}
+
+export async function getSelectedLyricProvider(
+  videoId: string,
+  song: string,
+  artist: string
+): Promise<LyricSourceKey | null> {
+  const result = await chrome.storage.local.get({ [getLyricProviderSelectionKey(videoId)]: null });
+  const selection = result[getLyricProviderSelectionKey(videoId)];
+  if (
+    isStoredLyricProviderSelection(selection) &&
+    selection.song === song &&
+    selection.artist === artist &&
+    isLyricSourceKey(selection.providerKey)
+  ) {
+    return selection.providerKey;
+  }
+  return null;
+}
+
+export async function setSelectedLyricProvider(
+  videoId: string,
+  song: string,
+  artist: string,
+  providerKey: LyricSourceKey
+): Promise<void> {
+  await chrome.storage.local.set({
+    [getLyricProviderSelectionKey(videoId)]: {
+      song,
+      artist,
+      providerKey,
+    },
+  });
+}
+
 export function initProviders(): void {
   if (hasInitializedProviders) {
     return;
   }
   hasInitializedProviders = true;
   const updateProvidersList = (preferredProviderList: string[] | null) => {
-    let activeProviderList: string[] = preferredProviderList ?? [...defaultPreferredProviderList];
+    let activeProviderList: string[] = preferredProviderList?.filter(provider => {
+      const rawProvider = provider.startsWith("d_") ? provider.slice(2) : provider;
+      return isLyricSourceKey(rawProvider);
+    }) ?? [...defaultPreferredProviderList];
 
-    const isValid = defaultPreferredProviderList.every(provider => {
-      return activeProviderList.includes(provider) || activeProviderList.includes(`d_${provider}`);
-    });
+    for (const provider of defaultPreferredProviderList) {
+      if (activeProviderList.includes(provider) || activeProviderList.includes(`d_${provider}`)) {
+        continue;
+      }
 
-    if (!isValid) {
-      activeProviderList = [...defaultPreferredProviderList];
-      log("Invalid preferred provider list, resetting to default");
+      const defaultIndex = defaultPreferredProviderList.indexOf(provider);
+      const insertionIndex = activeProviderList.findIndex(existingProvider => {
+        const rawProvider = existingProvider.startsWith("d_") ? existingProvider.slice(2) : existingProvider;
+        return isLyricSourceKey(rawProvider) && defaultPreferredProviderList.indexOf(rawProvider) > defaultIndex;
+      });
+
+      if (insertionIndex === -1) {
+        activeProviderList.push(provider);
+      } else {
+        activeProviderList.splice(insertionIndex, 0, provider);
+      }
     }
 
     // Use the type guard. The resulting array is known to be LyricSourceKey[]
@@ -163,6 +233,7 @@ const sourceKeyToFillFn = {
   "yt-lyrics": ytLyrics,
   "legato-synced": (p: ProviderParameters) => unified(p, "legato-synced"),
   "portato-richsynced": (p: ProviderParameters) => unified(p, "portato-richsynced"),
+  "genius-plain": (p: ProviderParameters) => unified(p, "genius-plain"),
   metadata: (p: ProviderParameters) => unified(p, "metadata" as LyricSourceKey),
 } as const;
 
