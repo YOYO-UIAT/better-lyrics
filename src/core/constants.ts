@@ -16,6 +16,7 @@ export const PAUSED_CLASS = "blyrics--paused" as const;
 export const PRE_ANIMATING_CLASS = "blyrics--pre-animating" as const;
 export const USER_SCROLLING_CLASS = "blyrics-user-scrolling" as const;
 export const TRANSLATED_LYRICS_CLASS = "blyrics--translated" as const;
+export const TRANSLATION_NOTE_CLASS = "blyrics--translation-note" as const;
 export const ROMANIZED_LYRICS_CLASS = "blyrics--romanized" as const;
 export const FOOTER_CLASS = "blyrics-footer" as const;
 export const UNISON_DOCK_CLASS = "blyrics-unison-dock" as const;

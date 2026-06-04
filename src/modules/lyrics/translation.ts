@@ -1,19 +1,31 @@
-import { TRANSLATE_IN_ROMAJI, TRANSLATE_LYRICS_URL, TRANSLATION_ERROR_LOG } from "@constants";
+import { TRANSLATE_IN_ROMAJI, TRANSLATION_ERROR_LOG } from "@constants";
 import { log } from "@utils";
 
-interface TranslationResult {
+export const GEMINI_TRANSLATION_DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
+export const GEMINI_TRANSLATION_DEFAULT_MODEL = "gemini-3.5-flash";
+export const GEMINI_TRANSLATION_THINKING_LEVEL = "high";
+
+export interface TranslationNote {
+  term: string;
+  explanation: string;
+}
+
+export interface TranslationResult {
   originalLanguage: string;
   translatedText: string;
+  notes?: TranslationNote[];
 }
 
 interface TranslationCache {
   romanization: Map<string, string>;
   translation: Map<string, TranslationResult>;
+  songTranslation: Map<string, BatchTranslationResponse>;
 }
 
 const cache: TranslationCache = {
   romanization: new Map(),
   translation: new Map(),
+  songTranslation: new Map(),
 };
 
 interface BatchRequest {
@@ -23,7 +35,15 @@ interface BatchRequest {
   signal?: AbortSignal;
 }
 
-interface BatchTranslationResponse {
+interface GeminiTranslationRequest extends BatchRequest {
+  song?: string;
+  artist?: string;
+  album?: string;
+  model?: string;
+  baseUrl?: string;
+}
+
+export interface BatchTranslationResponse {
   results: (TranslationResult | null)[];
   detectedLanguage: string;
 }
@@ -33,116 +53,181 @@ interface BatchRomanizationResponse {
   detectedLanguage: string;
 }
 
+interface GeminiTranslationMessage {
+  action: "translateLyricsWithGemini";
+  requestId: string;
+  payload: {
+    lines: { id: number; text: string }[];
+    targetLanguage: string;
+    sourceLanguage?: string;
+    song?: string;
+    artist?: string;
+    album?: string;
+    model: string;
+    baseUrl: string;
+    thinkingLevel: typeof GEMINI_TRANSLATION_THINKING_LEVEL;
+  };
+}
+
+interface GeminiTranslationResponse {
+  success: boolean;
+  detectedLanguage?: string;
+  lines?: {
+    id: number;
+    translation: string;
+    notes?: TranslationNote[];
+  }[];
+  error?: string;
+}
+
 const BATCH_SEPARATOR = "\n\n;\n\n";
 const MAX_URL_LENGTH = 15000;
 
+function normalizeTranslationNote(note: Partial<TranslationNote> | null | undefined): TranslationNote | null {
+  const term = typeof note?.term === "string" ? note.term.trim() : "";
+  const explanation = typeof note?.explanation === "string" ? note.explanation.trim() : "";
+  if (!term || !explanation) return null;
+  return { term, explanation };
+}
+
+function buildSongTranslationCacheKey(request: Required<Pick<GeminiTranslationRequest, "targetLanguage">> &
+  Pick<GeminiTranslationRequest, "sourceLanguage" | "song" | "artist" | "album" | "model" | "baseUrl"> & {
+    lines: string[];
+  }): string {
+  return JSON.stringify({
+    targetLanguage: request.targetLanguage,
+    sourceLanguage: request.sourceLanguage || "auto",
+    model: request.model || GEMINI_TRANSLATION_DEFAULT_MODEL,
+    baseUrl: request.baseUrl || GEMINI_TRANSLATION_DEFAULT_BASE_URL,
+    thinkingLevel: GEMINI_TRANSLATION_THINKING_LEVEL,
+    song: request.song || "",
+    artist: request.artist || "",
+    album: request.album || "",
+    lines: request.lines,
+  });
+}
+
+function createRequestId(): string {
+  return `gemini-translation-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+async function sendGeminiTranslationMessage(
+  message: GeminiTranslationMessage,
+  signal?: AbortSignal
+): Promise<GeminiTranslationResponse> {
+  if (signal?.aborted) {
+    throw new DOMException("Translation aborted", "AbortError");
+  }
+
+  const abortHandler = () => {
+    chrome.runtime.sendMessage({ action: "cancelGeminiTranslation", requestId: message.requestId }).catch(() => {});
+  };
+  signal?.addEventListener("abort", abortHandler, { once: true });
+
+  try {
+    return (await chrome.runtime.sendMessage(message)) as GeminiTranslationResponse;
+  } finally {
+    signal?.removeEventListener("abort", abortHandler);
+  }
+}
+
 /**
- * Translates a batch of lyric lines in a single request, chunked if necessary.
+ * Translates a full song with Gemini in one request so lyric context is preserved.
  */
-export async function translateBatch(request: BatchRequest): Promise<BatchTranslationResponse> {
-  const { lines, targetLanguage, signal } = request;
+export async function translateBatch(request: GeminiTranslationRequest): Promise<BatchTranslationResponse> {
+  const {
+    lines,
+    targetLanguage,
+    sourceLanguage,
+    song,
+    artist,
+    album,
+    signal,
+    model = GEMINI_TRANSLATION_DEFAULT_MODEL,
+    baseUrl = GEMINI_TRANSLATION_DEFAULT_BASE_URL,
+  } = request;
+
   if (!targetLanguage || lines.length === 0) {
     return { results: lines.map(() => null), detectedLanguage: "" };
   }
 
   const results: (TranslationResult | null)[] = new Array(lines.length).fill(null);
-  const toTranslate: { index: number; text: string }[] = [];
-
-  // Check cache first
-  lines.forEach((line, index) => {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed === "♪") return;
-
-    const cacheKey = `${targetLanguage}_${trimmed}`;
-    if (cache.translation.has(cacheKey)) {
-      results[index] = cache.translation.get(cacheKey)!;
-    } else {
-      toTranslate.push({ index, text: trimmed });
-    }
-  });
+  const toTranslate = lines
+    .map((line, index) => ({ id: index, text: line.trim() }))
+    .filter(line => line.text && line.text !== "♪");
 
   if (toTranslate.length === 0) {
-    return { results, detectedLanguage: results.find(r => r !== null)?.originalLanguage || "" };
+    return { results, detectedLanguage: sourceLanguage || "" };
   }
 
-  let detectedLanguage = "";
+  const cacheKey = buildSongTranslationCacheKey({
+    lines,
+    targetLanguage,
+    sourceLanguage,
+    song,
+    artist,
+    album,
+    model,
+    baseUrl,
+  });
+  const cached = cache.songTranslation.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
 
-  // Chunk toTranslate based on URL length limits
-  const chunks: { index: number; text: string }[][] = [];
-  let currentChunk: { index: number; text: string }[] = [];
-  let currentEncodedLength = 0;
+  try {
+    const response = await sendGeminiTranslationMessage(
+      {
+        action: "translateLyricsWithGemini",
+        requestId: createRequestId(),
+        payload: {
+          lines: toTranslate,
+          targetLanguage,
+          sourceLanguage,
+          song,
+          artist,
+          album,
+          model,
+          baseUrl,
+          thinkingLevel: GEMINI_TRANSLATION_THINKING_LEVEL,
+        },
+      },
+      signal
+    );
 
-  const baseUrl = TRANSLATE_LYRICS_URL(targetLanguage, "");
-  const separatorEncoded = encodeURIComponent(BATCH_SEPARATOR);
-
-  for (const item of toTranslate) {
-    const itemEncoded = encodeURIComponent(item.text);
-    const addedLength = (currentChunk.length > 0 ? separatorEncoded.length : 0) + itemEncoded.length;
-
-    if (currentChunk.length > 0 && baseUrl.length + currentEncodedLength + addedLength > MAX_URL_LENGTH) {
-      chunks.push(currentChunk);
-      currentChunk = [];
-      currentEncodedLength = 0;
+    if (!response.success) {
+      log(TRANSLATION_ERROR_LOG, response.error || "Gemini translation failed");
+      return { results, detectedLanguage: sourceLanguage || "" };
     }
 
-    currentChunk.push(item);
-    currentEncodedLength += (currentChunk.length > 1 ? separatorEncoded.length : 0) + itemEncoded.length;
-  }
-  if (currentChunk.length > 0) {
-    chunks.push(currentChunk);
-  }
-
-  for (const chunk of chunks) {
-    try {
-      const combinedText = chunk.map(item => item.text).join(BATCH_SEPARATOR);
-      const url = TRANSLATE_LYRICS_URL(targetLanguage, combinedText);
-
-      const response = await fetch(url, { cache: "force-cache", signal });
-      const data = await response.json();
-
-      if (!detectedLanguage) {
-        detectedLanguage = data[2] || "";
+    const detectedLanguage = response.detectedLanguage || sourceLanguage || "";
+    response.lines?.forEach(line => {
+      const original = toTranslate.find(item => item.id === line.id);
+      const translatedText = typeof line.translation === "string" ? line.translation.trim() : "";
+      if (!original || !translatedText || translatedText.toLowerCase() === original.text.toLowerCase()) {
+        return;
       }
 
-      let fullTranslatedText = "";
-      data[0].forEach((part: string[]) => {
-        fullTranslatedText += part[0];
-      });
+      const notes = (line.notes || []).map(normalizeTranslationNote).filter((note): note is TranslationNote => !!note);
+      const result: TranslationResult = {
+        originalLanguage: detectedLanguage,
+        translatedText,
+        notes,
+      };
+      results[line.id] = result;
+      cache.translation.set(`${targetLanguage}_${original.text}`, result);
+    });
 
-      let translatedLines = fullTranslatedText.split(BATCH_SEPARATOR);
-
-      // Fallback: If Google merged the translations into fewer blocks than expected
-      if (translatedLines.length < chunk.length) {
-        const semicolonSplit = fullTranslatedText.split(";").filter(l => l.trim().length > 0);
-        if (semicolonSplit.length === chunk.length) {
-          translatedLines = semicolonSplit;
-        } else {
-          const singleNewlineSplit = fullTranslatedText.split(/\r?\n/).filter(l => l.trim().length > 0);
-          if (singleNewlineSplit.length === chunk.length) {
-            translatedLines = singleNewlineSplit;
-          } else if (translatedLines.length === 1 && chunk.length > 1) {
-            log(TRANSLATION_ERROR_LOG, `Batch translation failed to split: expected ${chunk.length} lines, got 1.`);
-            translatedLines = [];
-          }
-        }
-      }
-
-      chunk.forEach((item, i) => {
-        const translatedText = translatedLines[i]?.trim();
-        if (translatedText && translatedText.toLowerCase() !== item.text.toLowerCase()) {
-          const result = { originalLanguage: detectedLanguage, translatedText };
-          cache.translation.set(`${targetLanguage}_${item.text}`, result);
-          results[item.index] = result;
-        }
-      });
-    } catch (error) {
-      if ((error as Error).name !== "AbortError") {
-        log(TRANSLATION_ERROR_LOG, error);
-      }
+    const batchResponse = { results, detectedLanguage };
+    cache.songTranslation.set(cacheKey, batchResponse);
+    return batchResponse;
+  } catch (error) {
+    if ((error as Error).name !== "AbortError") {
+      log(TRANSLATION_ERROR_LOG, error);
     }
   }
 
-  return { results, detectedLanguage };
+  return { results, detectedLanguage: sourceLanguage || "" };
 }
 
 /**
@@ -157,7 +242,6 @@ export async function romanizeBatch(request: BatchRequest): Promise<BatchRomaniz
   const results: (string | null)[] = new Array(lines.length).fill(null);
   const toRomanize: { index: number; text: string }[] = [];
 
-  // Check cache first
   lines.forEach((line, index) => {
     const trimmed = line.trim();
     if (!trimmed || trimmed === "♪") return;
@@ -175,7 +259,6 @@ export async function romanizeBatch(request: BatchRequest): Promise<BatchRomaniz
 
   let detectedLanguage = sourceLanguage || "auto";
 
-  // Chunk toRomanize based on URL length limits
   const chunks: { index: number; text: string }[][] = [];
   let currentChunk: { index: number; text: string }[] = [];
   let currentEncodedLength = 0;
@@ -222,7 +305,6 @@ export async function romanizeBatch(request: BatchRequest): Promise<BatchRomaniz
 
       let romanizedLines = fullRomanizedText.split(BATCH_SEPARATOR);
 
-      // Fallback: If Google merged the romanizations into fewer blocks than expected
       if (romanizedLines.length < chunk.length) {
         const semicolonSplit = fullRomanizedText.split(";").filter(l => l.trim().length > 0);
         if (semicolonSplit.length === chunk.length) {
@@ -258,6 +340,7 @@ export async function romanizeBatch(request: BatchRequest): Promise<BatchRomaniz
 export function clearCache(): void {
   cache.romanization.clear();
   cache.translation.clear();
+  cache.songTranslation.clear();
 }
 
 export function getTranslationFromCache(text: string, targetLanguage: string): TranslationResult | null {

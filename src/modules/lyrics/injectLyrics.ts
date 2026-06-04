@@ -16,6 +16,7 @@ import {
   SYNC_DISABLED_LOG,
   TAB_HEADER_CLASS,
   TRANSLATED_LYRICS_CLASS,
+  TRANSLATION_NOTE_CLASS,
   TRANSLATION_ENABLED_LOG,
   WORD_CLASS,
   ZERO_DURATION_ANIMATION_CLASS,
@@ -32,6 +33,7 @@ import {
   getTranslationFromCache,
   romanizeBatch,
   translateBatch,
+  type TranslationNote,
 } from "@modules/lyrics/translation";
 import { registerThemeSetting } from "@modules/settings/themeOptions";
 import { animEngineState, lyricsElementAdded } from "@modules/ui/animationEngine";
@@ -696,6 +698,7 @@ async function processBatchTranslationsAndRomanizations(
 
     if (isTranslateEnabled && !isSourceLangDisabled) {
       let translationResult: string | null = null;
+      let translationNotes: TranslationNote[] = [];
 
       const matchedLang =
         item.translations && Object.keys(item.translations).find(lang => langCodesMatch(targetTranslationLang, lang));
@@ -706,10 +709,11 @@ async function processBatchTranslationsAndRomanizations(
       } else {
         const cached = getTranslationFromCache(item.words, targetTranslationLang);
         translationResult = cached?.translatedText || null;
+        translationNotes = cached?.notes || [];
       }
 
       if (translationResult && !isSameText(translationResult, item.words)) {
-        injectTranslation(lyricElement, translationResult);
+        injectTranslation(lyricElement, translationResult, translationNotes);
       } else if (sourceLanguage !== targetTranslationLang || containsNonLatin(item.words) || !sourceLanguage) {
         translationBatch.push({ index, text: item.words });
       }
@@ -755,6 +759,12 @@ async function processBatchTranslationsAndRomanizations(
         const response = await translateBatch({
           lines: translationBatch.map(b => b.text),
           targetLanguage: targetTranslationLang,
+          sourceLanguage: sourceLanguage || undefined,
+          song: data.song,
+          artist: data.artist,
+          album: data.album,
+          model: AppState.geminiTranslationModel,
+          baseUrl: AppState.geminiTranslationBaseUrl,
           signal,
         });
         if (isStale()) return;
@@ -769,7 +779,7 @@ async function processBatchTranslationsAndRomanizations(
         response.results.forEach((result, i) => {
           if (result) {
             const originalIndex = translationBatch[i].index;
-            injectTranslation(linesData[originalIndex].lyricElement, result.translatedText);
+            injectTranslation(linesData[originalIndex].lyricElement, result.translatedText, result.notes);
           }
         });
         lyricsElementAdded();
@@ -801,7 +811,7 @@ function injectRomanization(
   lyricElement.appendChild(romanizedLine);
 }
 
-function injectTranslation(lyricElement: HTMLElement, text: string) {
+function injectTranslation(lyricElement: HTMLElement, text: string, notes: TranslationNote[] = []) {
   if (lyricElement.querySelector(`.${TRANSLATED_LYRICS_CLASS}`)) return;
 
   createBreakElem(lyricElement, 6);
@@ -810,6 +820,15 @@ function injectTranslation(lyricElement: HTMLElement, text: string) {
   translatedLine.style.order = "7";
   translatedLine.textContent = text;
   lyricElement.appendChild(translatedLine);
+
+  const visibleNotes = notes.slice(0, 2);
+  visibleNotes.forEach(note => {
+    const noteElement = document.createElement("div");
+    noteElement.classList.add(TRANSLATION_NOTE_CLASS);
+    noteElement.style.order = "8";
+    noteElement.textContent = `※ ${note.term}: ${note.explanation}`;
+    lyricElement.appendChild(noteElement);
+  });
 }
 
 export function calculateLyricPositions() {

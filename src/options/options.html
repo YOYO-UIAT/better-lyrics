@@ -332,6 +332,23 @@
 							</select>
 						</div>
 					</div>
+					<div id="gemini-translation-config" style="display: none;">
+						<div class="container">
+							<div class="option-text">
+								<span>__MSG_options_language_geminiApiKey__</span>
+								<p class="modal-row-hint">__MSG_options_language_geminiApiKey_hint__</p>
+							</div>
+							<input class="text-input" type="password" id="geminiTranslationApiKey" autocomplete="off">
+						</div>
+						<div class="container">
+							<span>__MSG_options_language_geminiModel__</span>
+							<input class="text-input" type="text" id="geminiTranslationModel" spellcheck="false">
+						</div>
+						<div class="container">
+							<span>__MSG_options_language_geminiBaseUrl__</span>
+							<input class="text-input text-input--wide" type="url" id="geminiTranslationBaseUrl" spellcheck="false">
+						</div>
+					</div>
 					<div class="container" id="romanization-config-container" style="display: none;">
 						<span>__MSG_options_language_exclusions__</span>
 						<button class="small-btn" id="romanization-config-btn">

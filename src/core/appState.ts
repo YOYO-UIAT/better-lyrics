@@ -40,6 +40,8 @@ interface AppStateType {
   romanizationDisabledLanguages: string[];
   translationDisabledLanguages: string[];
   translationLanguage: string;
+  geminiTranslationBaseUrl: string;
+  geminiTranslationModel: string;
   isPassiveScrollEnabled: boolean;
   hasPreloadedNextSong: boolean;
   currentInjectionId: number;
@@ -69,6 +71,8 @@ export const AppState: AppStateType = {
   romanizationDisabledLanguages: [],
   translationDisabledLanguages: [],
   translationLanguage: "en",
+  geminiTranslationBaseUrl: "https://generativelanguage.googleapis.com/v1beta",
+  geminiTranslationModel: "gemini-3.5-flash",
   isPassiveScrollEnabled: true,
   hasPreloadedNextSong: false,
   currentInjectionId: 0,

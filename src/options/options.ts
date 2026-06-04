@@ -16,6 +16,8 @@ interface Options {
   isPassiveScrollEnabled: boolean;
   isTranslateEnabled: boolean;
   translationLanguage: string;
+  geminiTranslationBaseUrl: string;
+  geminiTranslationModel: string;
   isCursorAutoHideEnabled: boolean;
   isRomanizationEnabled: boolean;
   preferredProviderList: string[];
@@ -53,6 +55,8 @@ const getOptionsFromForm = (): Options => {
     isPassiveScrollEnabled: (document.getElementById("isPassiveScrollEnabled") as HTMLInputElement).checked,
     isTranslateEnabled: (document.getElementById("translate") as HTMLInputElement).checked,
     translationLanguage: (document.getElementById("translationLanguage") as HTMLInputElement).value,
+    geminiTranslationBaseUrl: (document.getElementById("geminiTranslationBaseUrl") as HTMLInputElement).value.trim(),
+    geminiTranslationModel: (document.getElementById("geminiTranslationModel") as HTMLInputElement).value.trim(),
     isCursorAutoHideEnabled: (document.getElementById("cursorAutoHide") as HTMLInputElement).checked,
     isRomanizationEnabled: (document.getElementById("isRomanizationEnabled") as HTMLInputElement).checked,
     preferredProviderList: preferredProviderList,
@@ -74,12 +78,16 @@ function getSelectedUnisonPosition(): string {
 
 // Function to save options to Chrome storage
 const saveOptionsToStorage = (options: Options): void => {
-  chrome.storage.sync.set(options, () => {
-    chrome.tabs.query({ url: "https://music.youtube.com/*" }, tabs => {
-      tabs.forEach(tab => {
-        chrome.tabs.sendMessage(tab.id!, {
-          action: "updateSettings",
-          settings: options,
+  const geminiTranslationApiKey = (document.getElementById("geminiTranslationApiKey") as HTMLInputElement).value.trim();
+
+  chrome.storage.local.set({ geminiTranslationApiKey }, () => {
+    chrome.storage.sync.set(options, () => {
+      chrome.tabs.query({ url: "https://music.youtube.com/*" }, tabs => {
+        tabs.forEach(tab => {
+          chrome.tabs.sendMessage(tab.id!, {
+            action: "updateSettings",
+            settings: options,
+          });
         });
       });
     });
@@ -204,6 +212,8 @@ const restoreOptions = (): void => {
     isPassiveScrollEnabled: true,
     isTranslateEnabled: false,
     translationLanguage: "en",
+    geminiTranslationBaseUrl: "https://generativelanguage.googleapis.com/v1beta",
+    geminiTranslationModel: "gemini-3.5-flash",
     isRomanizationEnabled: false,
     preferredProviderList: [
       "bLyrics-richsynced",
@@ -248,6 +258,15 @@ const setOptionsInForm = (items: Options): void => {
   (document.getElementById("isPassiveScrollEnabled") as HTMLInputElement).checked = items.isPassiveScrollEnabled;
   (document.getElementById("translate") as HTMLInputElement).checked = items.isTranslateEnabled;
   (document.getElementById("translationLanguage") as HTMLInputElement).value = items.translationLanguage;
+  (document.getElementById("geminiTranslationBaseUrl") as HTMLInputElement).value =
+    items.geminiTranslationBaseUrl || "https://generativelanguage.googleapis.com/v1beta";
+  (document.getElementById("geminiTranslationModel") as HTMLInputElement).value =
+    items.geminiTranslationModel || "gemini-3.5-flash";
+  chrome.storage.local.get({ geminiTranslationApiKey: "" }, localItems => {
+    const apiKey = localItems.geminiTranslationApiKey;
+    (document.getElementById("geminiTranslationApiKey") as HTMLInputElement).value =
+      typeof apiKey === "string" ? apiKey : "";
+  });
   (document.getElementById("isRomanizationEnabled") as HTMLInputElement).checked = items.isRomanizationEnabled;
   (document.getElementById("uiLanguage") as HTMLSelectElement).value = items.uiLanguage;
   (document.getElementById("isUnisonPinnedDockEnabled") as HTMLInputElement).checked = items.isUnisonPinnedDockEnabled;
@@ -258,6 +277,7 @@ const setOptionsInForm = (items: Options): void => {
   romanizationDisabledLanguages = items.romanizationDisabledLanguages || [];
   translationDisabledLanguages = items.translationDisabledLanguages || [];
   updateExclusionsConfigVisibility();
+  updateGeminiConfigVisibility();
   renderRomanizationLanguagePills();
   renderTranslationLanguagePills();
 
@@ -793,6 +813,14 @@ function updateExclusionsConfigVisibility(): void {
   configContainer.style.display = shouldShow ? "flex" : "none";
 }
 
+function updateGeminiConfigVisibility(): void {
+  const translateToggle = document.getElementById("translate") as HTMLInputElement;
+  const geminiConfigContainer = document.getElementById("gemini-translation-config");
+  if (!geminiConfigContainer) return;
+
+  geminiConfigContainer.style.display = translateToggle?.checked ? "block" : "none";
+}
+
 function initLangExclusionsModal(): void {
   const romanizationToggle = document.getElementById("isRomanizationEnabled") as HTMLInputElement;
   const translateToggle = document.getElementById("translate") as HTMLInputElement;
@@ -807,7 +835,10 @@ function initLangExclusionsModal(): void {
   if (!configBtn || !modalOverlay) return;
 
   romanizationToggle?.addEventListener("change", updateExclusionsConfigVisibility);
-  translateToggle?.addEventListener("change", updateExclusionsConfigVisibility);
+  translateToggle?.addEventListener("change", () => {
+    updateExclusionsConfigVisibility();
+    updateGeminiConfigVisibility();
+  });
 
   configBtn.addEventListener("click", () => {
     modalOverlay.classList.add("active");

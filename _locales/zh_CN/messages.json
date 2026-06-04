@@ -171,6 +171,22 @@
     "message": "翻译语言",
     "description": "Translation language setting label"
   },
+  "options_language_geminiApiKey": {
+    "message": "Gemini API 密钥",
+    "description": "Gemini API key setting label"
+  },
+  "options_language_geminiApiKey_hint": {
+    "message": "密钥仅保存在本机浏览器, 不会同步到账号.",
+    "description": "Gemini API key storage hint"
+  },
+  "options_language_geminiModel": {
+    "message": "Gemini 模型",
+    "description": "Gemini model setting label"
+  },
+  "options_language_geminiBaseUrl": {
+    "message": "Gemini API Base URL",
+    "description": "Gemini API base URL setting label"
+  },
   "options_sources_title": {
     "message": "歌词来源优先级",
     "description": "Sources settings section title"

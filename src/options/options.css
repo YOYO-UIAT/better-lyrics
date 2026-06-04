@@ -113,6 +113,33 @@ body {
     margin-top: 1.5rem;
 }
 
+.option-text {
+	display: flex;
+	flex-direction: column;
+	gap: 0.25rem;
+}
+
+.text-input {
+	background: rgba(0, 0, 0, 0.12);
+	border: 1px solid rgba(255, 255, 255, 0.12);
+	border-radius: 0.5rem;
+	color: #fff;
+	font-family: inherit;
+	font-size: 0.9rem;
+	min-width: 18rem;
+	padding: 0.5rem 0.75rem;
+}
+
+.text-input--wide {
+	min-width: min(30rem, 100%);
+}
+
+.text-input:focus {
+	border-color: rgba(255, 255, 255, 0.25);
+	box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.05);
+	outline: none;
+}
+
 /* -- Theme Preview Card -------------------------- */
 
 .theme-preview-card {

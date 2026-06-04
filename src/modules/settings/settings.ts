@@ -3,7 +3,11 @@ import { AppState, reloadLyrics } from "@core/appState";
 import { clearCache, compileRicsToStyles, getStorage } from "@core/storage";
 import { log, setUpLog } from "@core/utils";
 import { calculateLyricPositions } from "@modules/lyrics/injectLyrics";
-import { clearCache as clearTranslationCache } from "@modules/lyrics/translation";
+import {
+  clearCache as clearTranslationCache,
+  GEMINI_TRANSLATION_DEFAULT_BASE_URL,
+  GEMINI_TRANSLATION_DEFAULT_MODEL,
+} from "@modules/lyrics/translation";
 import { mountUnisonDock, reloadAlbumArt, unmountUnisonDock, updateUnisonDockPosition } from "@modules/ui/dom";
 import { applyCustomStyles, getAndApplyCustomStyles } from "@modules/ui/styleInjector";
 
@@ -191,7 +195,11 @@ export function listenForPopupMessages(): void {
       setUpLog();
       hideCursorOnIdle();
       handleSettings();
-      loadTranslationSettings();
+      if (request.settings) {
+        applyTranslationSettings(request.settings);
+      } else {
+        loadTranslationSettings();
+      }
       loadPassiveScrollSetting();
       loadUnisonPinnedDockSettings(() => {
         syncUnisonDock();
@@ -311,15 +319,29 @@ export function loadTranslationSettings(): void {
       isTranslateEnabled: false,
       isRomanizationEnabled: false,
       translationLanguage: "en",
+      geminiTranslationBaseUrl: GEMINI_TRANSLATION_DEFAULT_BASE_URL,
+      geminiTranslationModel: GEMINI_TRANSLATION_DEFAULT_MODEL,
       romanizationDisabledLanguages: [],
       translationDisabledLanguages: [],
     },
-    items => {
-      AppState.isTranslateEnabled = items.isTranslateEnabled;
-      AppState.isRomanizationEnabled = items.isRomanizationEnabled;
-      AppState.translationLanguage = items.translationLanguage || "en";
-      AppState.romanizationDisabledLanguages = items.romanizationDisabledLanguages || [];
-      AppState.translationDisabledLanguages = items.translationDisabledLanguages || [];
-    }
+    applyTranslationSettings
   );
+}
+
+function applyTranslationSettings(items: {
+  isTranslateEnabled?: boolean;
+  isRomanizationEnabled?: boolean;
+  translationLanguage?: string;
+  geminiTranslationBaseUrl?: string;
+  geminiTranslationModel?: string;
+  romanizationDisabledLanguages?: string[];
+  translationDisabledLanguages?: string[];
+}): void {
+  AppState.isTranslateEnabled = !!items.isTranslateEnabled;
+  AppState.isRomanizationEnabled = !!items.isRomanizationEnabled;
+  AppState.translationLanguage = items.translationLanguage || "en";
+  AppState.geminiTranslationBaseUrl = items.geminiTranslationBaseUrl || GEMINI_TRANSLATION_DEFAULT_BASE_URL;
+  AppState.geminiTranslationModel = items.geminiTranslationModel || GEMINI_TRANSLATION_DEFAULT_MODEL;
+  AppState.romanizationDisabledLanguages = items.romanizationDisabledLanguages || [];
+  AppState.translationDisabledLanguages = items.translationDisabledLanguages || [];
 }

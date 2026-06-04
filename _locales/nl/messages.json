@@ -171,6 +171,22 @@
     "message": "Taal van vertaling",
     "description": "Translation language setting label"
   },
+  "options_language_geminiApiKey": {
+    "message": "Gemini API key",
+    "description": "Gemini API key setting label"
+  },
+  "options_language_geminiApiKey_hint": {
+    "message": "The key is stored only in this browser and is not synced to your account.",
+    "description": "Gemini API key storage hint"
+  },
+  "options_language_geminiModel": {
+    "message": "Gemini model",
+    "description": "Gemini model setting label"
+  },
+  "options_language_geminiBaseUrl": {
+    "message": "Gemini API base URL",
+    "description": "Gemini API base URL setting label"
+  },
   "options_sources_title": {
     "message": "Songteskt bronvoorkeur",
     "description": "Sources settings section title"
